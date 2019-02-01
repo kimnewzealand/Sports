@@ -1,0 +1,222 @@
+---
+title: "Breakers basketball animations"
+author: "kimnewzealand"
+date: "31 January 2019"
+output: html_document
+---
+
+## Introduction
+
+I went to my first basketball game on 27 January 2019 to watch the [Skycity Breakers](https://www.nzbreakers.basketball/) versus Brisbane Bullets. The final [score](http://nbl.com.au/games/898779?_ga=2.33645729.1003495050.1548880153-1800185312.1548880153) was Breakers 109-96 Bullets.
+
+
+Since it was a close game I wondered if the type of shots attempted got closer to the hoop under pressure near the end of time, assuming that shorter range shots have a better success rate ?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r packages}
+library(tidyverse)
+library(gganimate)
+```
+
+## Data
+
+There are some stats available on the Breakers and NBL websites however it would require web scraping. There is also shots data in csv format available from @andrewbprice's [GitHib](https://github.com/andrewbprice) which we will use. The downside is that this was published in 2016, so not recent data from Sunday's game but  it will serve the purpose of analysing shots for Breakers players.
+
+```{r read data, warning=FALSE}
+url <-  "https://raw.githubusercontent.com/andrewbprice/NBLShotCharts-D3/master/combinedShots_all.csv"
+shots <- read_csv(url)
+```
+
+```{r summary}
+# View a summary statistics f the data
+skimr::skim(shots)
+```
+  
+  
+**MISSING VALUES**
+
+There do not appear to be any missing X and Y variables, to plot the location of the shooter.
+
+There are however missing subtypes so we may want consider a higher level whether the shooter made or missed the shot.
+
+There are also missing `Quarters`.
+
+
+## Data Cleaning
+
+```{r clean data}
+# Clean the Result column and add a new TimeFrame column
+shots <- shots %>% 
+      # Recode the Result to a more descriptive categorical values Made and Missed
+      mutate(Result = ifelse(Result == 1,"Made", "Missed")) %>% 
+      # F. Delaney is mispelt in some enteries so we can recode to the correct spelliung F. Delany
+      mutate(Player = ifelse(Player == "F. Delaney","F. Delany",Player))  
+```
+
+We will pick a season to analyse, one with lesser data than the others for quicker plots and ability to cross reference to the [shot machine](https://spatialjam.com/shot-machine) plots which appears to groups the New Zealand teams together.
+
+```{r season}
+# View the Season variable list
+table(shots$Season)
+# Check what teams are in the season 2016 ACB
+shots %>% filter(Season=="2016 ACB") %>% 
+      select(Team) %>% 
+      table()
+```
+
+From this data we could extract the shots from the Team variable for "New Zealand Breakers" for the Season "2016 ACB" as there is just this NZ team in the season.
+
+
+```{r breakers shots}
+# Filter the breakers data by the 2016 ACB Season
+shotsBreakers <- shots %>%
+      filter(Team=="New Zealand Breakers") %>%
+      filter(Season =="2016 ACB")
+# View the total shots by Breakers players over the 2016 ACB season
+totalshots <- table(shotsBreakers$Player,shotsBreakers$Result) %>% 
+      as.data.frame() %>% 
+      spread(key = Var2,value = Freq) %>% 
+      mutate(TotalAttempts=(Made+Missed)) %>% 
+      mutate(GoalPerc=Made/(Made+Missed)) %>% 
+      arrange(desc(Made))
+totalshots
+```
+
+
+From we can choose one player to view an initial plot.
+
+```{r highest scorer}
+# Selecting the highest scorer (although not the most accurate!) to view a breakdown of shots
+shotsBreakers %>% 
+      filter(Player=="T. Abercrombie")  %>% 
+      select(PlayerNo,Player,opponent,ShotType,Result) %>% 
+      group_by(Player,PlayerNo,opponent,ShotType,Result) %>% 
+      dplyr::summarize(Total =n())
+```
+
+## Visualisations
+
+Let's use [ggplot2](https://cran.r-project.org/web/packages/ggplot2/index.html) to visualise the players shots.
+
+```{r first plot}
+# Select highest scoring player to view the shots, Create 
+shotsBreakers  %>% 
+      filter(Player =="T. Abercrombie") %>% 
+      ggplot()  +
+      geom_point(aes(X,Y,color=Result),size=5) +
+      scale_color_manual(values=c("lightgreen","lightgrey")) +       
+      # Add player number
+      geom_text(aes(x=X,y=Y,label=PlayerNo),color='black')+
+      # Remove gridlines
+      theme_classic() +
+      ggtitle("Shots by T. Abercrombie for 2016 ACB Season Breakers Season")
+```
+
+In order to plot the court layout I first looked at this [blog](https://thedatagame.com.au/2015/09/27/how-to-create-nba-shot-charts-in-r/) which plotted the points on an image. I preferred to plot the court layout using ggplot so that I could have some flexibility and ability to the scale of the data available. So I adapted the code found in this [GitHub](https://gist.github.com/edkupfer/6354964) link. I had to select only the half court, then rotate the court and then scale to match the Breakers data. This was to avoid manipulating the Breakers X,Y point data which could potentially introduce errors.
+
+```{r create half court}
+# Half court adapted from full court https://gist.github.com/edkupfer/6354964 code 
+halfcourt <- ggplot(data=data.frame(x=1,y=1),aes(x,y))+
+   ###outside box:
+geom_path(data=data.frame(x=c(0,0,50,50,0)*2,y=c(0,47,47,0,0)))+
+   ###solid FT semicircle above FT line:
+geom_path(data=data.frame(x=c(-6000:(-1)/1000,1:6000/1000)*2+50,y=-c(28-sqrt(6^2-c(-6000:(-1)/1000,1:6000/1000)^2))+47),aes(x=x,y=y))+
+   ###dashed FT semicircle below FT line:
+geom_path(data=data.frame(x=c(-6000:(-1)/1000,1:6000/1000)*2+50,y=-c(28+sqrt(6^2-c(-6000:(-1)/1000,1:6000/1000)^2))+47),aes(x=x,y=y),linetype='dashed')+
+   ###key:
+geom_path(data=data.frame(x=-c(-8,-8,8,8,-8)*2+50,y=-c(47,28,28,47,47)+47))+
+   ###box inside the key:
+geom_path(data=data.frame(x=c(-6,-6,6,6,-6)*2+50,y=-c(47,28,28,47,47)+47))+
+   ###restricted area semicircle:
+geom_path(data=data.frame(x=c(-4000:(-1)/1000,1:4000/1000)*2+50,y=-c(41.25-sqrt(4^2-c(-4000:(-1)/1000,1:4000/1000)^2))+47),aes(x=x,y=y))+
+   ###rim:
+geom_path(data=data.frame(x=c(-750:(-1)/1000,1:750/1000,750:1/1000,-1:-750/1000)*2+50,y=-c(c(41.75+sqrt(0.75^2-c(-750:(-1)/1000,1:750/1000)^2)),c(41.75-sqrt(0.75^2-c(750:1/1000,-1:-750/1000)^2)))+47),aes(x=x,y=y))+
+   ###backboard:
+geom_path(data=data.frame(x=c(-3,3)*2+50,y=-c(43,43)+47),lineend='butt')+
+   ###three-point line:
+geom_path(data=data.frame(x=c(-22,-22,-22000:(-1)/1000,1:22000/1000,22,22)*2+50,y=-c(47,47-169/12,41.75-sqrt(23.75^2-c(-22000:(-1)/1000,1:22000/1000)^2),47-169/12,47)+47),aes(x=x,y=y))+
+# rotate the half court using coord_flip
+coord_flip()
+```
+
+Now we will plot the shots onto the half court.
+
+```{r shots on  half court}
+# Plot on half court split by player using facet_wrap
+ACBplot <- halfcourt +
+            # We swap the X and Y coordinates to plot correctly on the coord_flipped halfcourt
+      geom_point(data=shotsBreakers,aes(Y,X,color=Result),size=5) +       
+      # Add player number
+      geom_text(data=shotsBreakers,aes(x=Y,y=X,label=PlayerNo),color='black')+
+      scale_color_manual(values=c("lightgreen","lightgrey")) +
+      # Remove all plot details with theme_void
+      theme_void() +
+      ggtitle("Total Shots for Breakers 2016 ACB Season")+
+      facet_wrap(~Player)
+ACBplot
+# Save plot for blog
+# ggsave("ACBplot.jpg",ACBplot )
+```
+
+We can cross check these plots against this [shot machine](https://spatialjam.com/shot-machine) filtering by 2016 ACB Season and Team New Zealand. 
+
+The shot plots seems to match however there appear to be data quality issues with the player numbers for example `B. Woodside` has  11's and 5's. Let's ignore the player players for this analysis and just look at the Made or Missed shots.
+
+
+Finally we will create an animation of the shots by quarter. Let's first check for any Quarter missing values in this subset.
+
+```{r quarter NA}
+# check NA in shotsBreakers
+shotsBreakers %>% 
+      filter(is.na(Quarter))
+```
+
+
+There are no missing `Quarters`. 
+
+When we initially think of animations we think that there are flip cards by a specified variable. We have already used `facet_wrap` which [wraps a 1d sequence of panels into 2d](https://www.rdocumentation.org/packages/ggplot2/versions/3.1.0/topics/facet_wrap). Let's use this function again to create flip cards and then animate with [gganimate](https://cran.r-project.org/web/packages/gganimate/index.html) R package and the [transition_states](https://gganimate.com/reference/transition_states.html?q=tween) function.
+
+Initially I thought  to use the [transition_reveal](https://gganimate.com/reference/transition_reveal) R function to gradually show the shooting spots. I thought a transition would show up the difference better between `Quarters` minimising the persistence between states as this would convey movement of the spots. By adding a group aesthetic and then transitioning on the same variable, this ensured no persistence or movement between states.
+
+```{r allseason}
+allseason <-  halfcourt  +
+      # We swap the X and Y coordinates to plot correctly on the coord_flipped halfcourt
+      geom_point(data=shotsBreakers ,aes(Y,X,color=Result,group=Quarter),size=3)  +
+      scale_color_manual(values=c("green","lightgrey"))+
+      # Remove all plot details with theme_void
+      theme_void()
+# Let's view the total shots split by variable Quarter using facet_wrap
+ACBbyfacet <- allseason +
+      facet_wrap(~Quarter)
+ACBbyfacet
+# Save plot for blog
+ggsave("ACBbyfacet.jpg",ACBbyfacet )
+```
+
+```{r animation}
+# Animate using the new gganimate function transition_states
+anim <- allseason +
+      labs(title = "Game quarter: {closest_state}")+ 
+      transition_states(Quarter,wrap =FALSE) +
+      enter_appear() + 
+      exit_fade(alpha=0)
+anim
+# Save animation for blog
+# anim_save("anim.gif",anim)
+```
+
+## Conclusion
+
+It does appear from these plots that the players get closer to the hoop in quarter 4.
+
+It would also good to try out the recent version of [gganimate](https://cran.r-project.org/web/packages/gganimate/index.html) after the [Grammar of animation keynote at useR2018](https://user2018.r-project.org/scientific/). I had to update from version 0.1.1 to 1.0.0 due to the package revisions and install the [giski](https://cran.r-project.org/web/packages/gifski/index.html) R package for the animations to work.
+
+## References
+
+- The revisions of [gganimate has transitioned to a state of release](https://www.data-imaginist.com/2019/gganimate-has-transitioned-to-a-state-of-release/) by Thomas Lin Pedersen.
+- This [Animating NBA Play by Play using R
+James blog by P Curley ](http://curleylab.psych.columbia.edu/nba.html) was inspiration for the animation.
+- The [full court plot court by Ed Küpfer](https://gist.github.com/edkupfer/6354964) was used as the basis for the half court plot
